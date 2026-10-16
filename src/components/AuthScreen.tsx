@@ -32,17 +32,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   // Completely separate portals: 'citizen' or 'admin'
   const [activePortal, setActivePortal] = useState<'citizen' | 'admin'>('citizen');
 
-  // Citizen credentials
+  // Citizen guest profile
   const [citizenEmail, setCitizenEmail] = useState('citizen@ecosort.ai');
   const [citizenName, setCitizenName] = useState('Alex Rivera');
-  const [citizenPassword, setCitizenPassword] = useState('recycle2026');
 
   // Admin credentials
-  const [adminEmail, setAdminEmail] = useState('admin@ecosort.ai');
-  const [adminPassword, setAdminPassword] = useState('greenops2026');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
 
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -214,9 +212,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
     try {
       setIsLoading(true);
-      // Citizen portal: anyone can log in
-      const user = await loginUser(citizenEmail, 'citizen', 'citizen', citizenName);
-      setSuccessMessage(`Welcome back, ${user.name}! Entering Citizen Portal...`);
+      const user = await loginUser(citizenEmail, { portal: 'citizen', name: citizenName });
+      setSuccessMessage(`Welcome, ${user.name}! Entering Citizen Portal...`);
       setTimeout(() => {
         onLoginSuccess(user);
       }, 650);
@@ -237,15 +234,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
     try {
       setIsLoading(true);
-      // Admin portal: STRICT check against verified admin list
-      const user = await loginUser(adminEmail, 'admin', 'admin');
-      setSuccessMessage(`Verified Admin Access Granted! Welcome, ${user.name} (${user.isMainAdmin ? 'Main Administrator' : 'Operations Admin'}).`);
+      const user = await loginUser(adminEmail, { portal: 'admin', password: adminPassword });
+      setSuccessMessage(`Administrator access granted. Welcome, ${user.name}.`);
       setTimeout(() => {
         onLoginSuccess(user);
       }, 700);
     } catch (err: any) {
-      // Rejection for unverified emails or regular users attempting admin login
-      setErrorMessage(err.message || 'Access Denied: Only verified administrator emails are permitted.');
+      setErrorMessage(err.message || 'Administrator sign-in failed.');
       setIsLoading(false);
     }
   };
@@ -459,25 +454,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 <span className="font-medium">Open Registration Active · Campus Community</span>
               </div>
 
-              {/* 1-Click Fast Evaluator Mode for Citizens */}
-              <div className="mb-5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCitizenEmail('citizen@ecosort.ai');
-                    setCitizenName('Alex Rivera');
-                    setCitizenPassword('recycle2026');
-                  }}
-                  className="w-full py-2 px-3 rounded-xl border border-emerald-500/30 bg-emerald-900/30 hover:bg-emerald-800/40 text-emerald-200 text-xs font-medium transition-colors flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 text-lime-400" />
-                    <span>Demo Citizen Profile: <strong>Alex Rivera</strong></span>
-                  </div>
-                  <span className="text-[10px] font-mono text-emerald-400">195 pts · Tier 3</span>
-                </button>
-              </div>
-
               <form onSubmit={handleCitizenSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -512,41 +488,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={citizenPassword}
-                      onChange={(e) => setCitizenPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400 transition-colors"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
                 <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-400/20"
-                    />
-                    <span>Remember terminal</span>
-                  </label>
-                  <span className="text-[11px] text-emerald-400/80">Demo: recycle2026</span>
+                  <span className="text-[11px] text-emerald-400/80">Guest account · no password</span>
+                  <span className="text-[11px]">Session expires after 8 hours</span>
                 </div>
 
                 <button
@@ -595,68 +539,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   Admin Sign In
                 </h2>
                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  Strict security verification. Only email addresses authorized in advance by the <strong>Main Administrator</strong> can log into this section.
+                  Administrator access requires the credentials configured privately by the site owner.
                 </p>
               </div>
 
-              {/* Strict Security Notice */}
+              {/* Admin security notice */}
               <div className="mb-5 p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/30 text-xs">
                 <div className="flex items-center gap-2 text-blue-300 font-semibold mb-1">
                   <KeyRound className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Main Admin Authorization Gate</span>
+                  <span>Protected administrator sign-in</span>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Only the <strong>Main Admin</strong> and colleagues whose emails were verified before login can authenticate here. Citizen accounts cannot access this gateway.
+                  The configured administrator and emails explicitly authorized by an administrator can access operational controls. Citizen accounts cannot enter this gateway.
                 </p>
-              </div>
-
-              {/* Fast Evaluator Fill Buttons for Admin Evaluators */}
-              <div className="mb-5 space-y-2">
-                <div className="text-[10px] font-mono uppercase text-slate-400 flex items-center justify-between">
-                  <span>Authorized Accounts:</span>
-                  <span className="text-blue-400">Pre-Verified</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminEmail('admin@ecosort.ai');
-                      setAdminPassword('greenops2026');
-                    }}
-                    className="p-2.5 rounded-xl border border-blue-500/30 bg-blue-950/50 hover:bg-blue-900/50 text-left transition-colors flex flex-col"
-                  >
-                    <span className="text-xs font-bold text-white flex items-center gap-1">
-                      <span>Elena Rostova</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Main</span>
-                    </span>
-                    <span className="text-[10px] text-blue-300 font-mono">admin@ecosort.ai</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminEmail('volunteer@ecosort.ai');
-                      setAdminPassword('greenops2026');
-                    }}
-                    className="p-2.5 rounded-xl border border-slate-700 bg-slate-900/60 hover:bg-slate-800 text-left transition-colors flex flex-col"
-                  >
-                    <span className="text-xs font-bold text-white">Marcus Chen</span>
-                    <span className="text-[10px] text-slate-400 font-mono">volunteer@ecosort.ai</span>
-                  </button>
-                </div>
-
-                {/* Pre-verified user email */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminEmail('chandhankumar356@gmail.com');
-                    setAdminPassword('greenops2026');
-                  }}
-                  className="w-full py-1.5 px-3 rounded-xl border border-blue-500/20 bg-blue-950/20 hover:bg-blue-900/30 text-left text-xs text-blue-200 transition-colors flex items-center justify-between"
-                >
-                  <span>Chandhan Kumar (Verified Admin):</span>
-                  <span className="font-mono text-[10px] text-blue-400">chandhankumar356@gmail.com</span>
-                </button>
               </div>
 
               <form onSubmit={handleAdminSubmit} className="space-y-4">
@@ -671,7 +566,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                       required
                       value={adminEmail}
                       onChange={(e) => setAdminEmail(e.target.value)}
-                      placeholder="admin@ecosort.ai"
+                      placeholder="Configured administrator email"
                       className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-400 transition-colors"
                     />
                   </div>
@@ -702,16 +597,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-400/20"
-                    />
-                    <span>Remember terminal</span>
-                  </label>
-                  <span className="text-[11px] text-blue-400/80">Demo: greenops2026</span>
+                  <span className="text-[11px] text-blue-400/80">Use configured credentials</span>
+                  <span className="text-[11px]">Session expires after 8 hours</span>
                 </div>
 
                 <button

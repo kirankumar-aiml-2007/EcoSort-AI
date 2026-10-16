@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import { 
   store, 
@@ -10,30 +11,24 @@ import {
   SEED_USERS 
 } from './apiHandler.ts';
 import type { WasteCategory, BinColor, LifecycleStatus, WasteItem, UserAccount } from '../src/types/ecosort.ts';
+import {
+  clearSessionCookie,
+  hasConfiguredAdminAccount,
+  matchesConfiguredAdminPassword,
+  readSession,
+  setSessionCookie,
+} from './auth.ts';
 
 export const apiRouter = express.Router();
 
 apiRouter.use(express.json({ limit: '20mb' }));
 
-// Role-based authorization middleware (Phase 4)
 function requireRole(allowedRoles: Array<'citizen' | 'volunteer' | 'admin'>) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const roleHeader = (req.headers['x-user-role'] as string) || (req.headers['authorization'] as string);
-    const userIdHeader = req.headers['x-user-id'] as string;
-
-    // Check user record
-    let user: UserAccount | undefined;
-    if (userIdHeader) {
-      user = store.getUser(userIdHeader);
-    }
-
-    const currentRole = user?.role || (roleHeader as 'citizen' | 'volunteer' | 'admin') || 'citizen';
-
-    if (!allowedRoles.includes(currentRole)) {
+    const user = res.locals.authenticatedUser;
+    if (!user || !allowedRoles.includes(user.role)) {
       return res.status(403).json({ 
-        error: `Access Denied: Requires one of [${allowedRoles.join(', ')}] role. Your role: ${currentRole}`,
-        requiredRoles: allowedRoles,
-        currentRole
+        error: `Access denied. Requires one of: ${allowedRoles.join(', ')}.`,
       });
     }
 
@@ -41,9 +36,133 @@ function requireRole(allowedRoles: Array<'citizen' | 'volunteer' | 'admin'>) {
   };
 }
 
-// Health Check & System Diagnostics (Phase 6 & 11)
 apiRouter.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', platform: 'EcoFlux AI Intelligence', time: new Date().toISOString() });
+});
+
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function limitLoginAttempts(req: Request, res: Response, next: NextFunction) {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const attempt = loginAttempts.get(key);
+  if (!attempt || attempt.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  if (attempt.count >= 10) {
+    return res.status(429).json({ error: 'Too many sign-in attempts. Try again in one minute.' });
+  }
+  attempt.count += 1;
+  next();
+}
+
+const aiRequests = new Map<string, { count: number; resetAt: number }>();
+
+function limitAiRequests(req: Request, res: Response, next: NextFunction) {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const attempt = aiRequests.get(key);
+  if (!attempt || attempt.resetAt <= now) {
+    aiRequests.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  if (attempt.count >= 12) {
+    return res.status(429).json({ error: 'AI request limit reached. Try again in one minute.' });
+  }
+  attempt.count += 1;
+  next();
+}
+
+apiRouter.post('/auth/login', limitLoginAttempts, (req: Request, res: Response) => {
+  const { email, name, password, portal = 'citizen' } = req.body;
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+  }
+
+  let user: UserAccount;
+  if (portal === 'admin') {
+    const configuredEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+    const authorizedAdmin = store.isEmailAuthorizedAdmin(cleanEmail);
+    const isAllowedEmail = cleanEmail === configuredEmail || Boolean(authorizedAdmin);
+    if (
+      !hasConfiguredAdminAccount() ||
+      !isAllowedEmail ||
+      !matchesConfiguredAdminPassword(typeof password === 'string' ? password : '')
+    ) {
+      return res.status(401).json({ success: false, error: 'Invalid administrator credentials or admin sign-in is not configured.' });
+    }
+    const seedAdmin = authorizedAdmin
+      ? SEED_USERS.find(account => account.email.toLowerCase() === cleanEmail)
+      : SEED_USERS.find(account => account.role === 'admin');
+    const role = authorizedAdmin?.role ?? 'admin';
+    user = {
+      ...(seedAdmin ?? SEED_USERS[0]),
+      id: `admin-${randomUUID()}`,
+      email: cleanEmail,
+      name: authorizedAdmin?.name || seedAdmin?.name || cleanEmail.split('@')[0],
+      stationOrZone: authorizedAdmin?.department || seedAdmin?.stationOrZone,
+      role,
+      isMainAdmin: role === 'admin',
+    };
+  } else if (portal === 'citizen') {
+    const generatedName = cleanEmail.split('@')[0]?.replace(/[._-]/g, ' ') || 'Citizen';
+    const displayName = typeof name === 'string' && name.trim()
+      ? name.trim().slice(0, 80)
+      : generatedName.replace(/\b\w/g, letter => letter.toUpperCase());
+    user = {
+      id: `guest-${randomUUID()}`,
+      email: cleanEmail,
+      name: displayName,
+      role: 'citizen',
+      stationOrZone: 'West Campus Hub · Station A',
+      credits: 50,
+      rank: 'Eco Newcomer (Tier 1)',
+      itemsRecycled: 0,
+      hazardousSafeDrops: 0,
+      co2DivertedKg: 0,
+      streakDays: 1,
+      badges: ['Welcome Recycler'],
+    };
+  } else {
+    return res.status(400).json({ success: false, error: 'Unsupported sign-in portal.' });
+  }
+
+  store.addUser(user);
+  setSessionCookie(res, { id: user.id, email: user.email, name: user.name, role: user.role });
+  res.json({ success: true, user });
+});
+
+apiRouter.post('/auth/logout', (_req: Request, res: Response) => {
+  clearSessionCookie(res);
+  res.json({ success: true });
+});
+
+apiRouter.use((req: Request, res: Response, next: NextFunction) => {
+  const user = readSession(req);
+  if (!user || !store.getUser(user.id)) {
+    clearSessionCookie(res);
+    return res.status(401).json({ error: 'Sign in to continue.' });
+  }
+
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    const origin = req.get('origin');
+    const expectedOrigin = `${req.protocol}://${req.get('host')}`;
+    if (origin !== expectedOrigin) {
+      return res.status(403).json({ error: 'Request origin validation failed.' });
+    }
+  }
+
+  res.locals.authenticatedUser = user;
+  next();
+});
+
+apiRouter.get('/auth/me', (_req: Request, res: Response) => {
+  const identity = res.locals.authenticatedUser;
+  const user = store.getUser(identity.id);
+  if (!user) return res.status(401).json({ error: 'Session expired. Sign in again.' });
+  res.json({ user });
 });
 
 // Direct project zip download for VS Code local development
@@ -54,130 +173,23 @@ apiRouter.get('/download-zip', (_req: Request, res: Response) => {
   res.sendFile(zipPath);
 });
 
-apiRouter.get('/admin/system-health', (_req: Request, res: Response) => {
+apiRouter.get('/admin/system-health', requireRole(['admin']), (_req: Request, res: Response) => {
   res.json(store.getSystemHealth());
 });
 
-// Authentication endpoints (Phase 4)
-apiRouter.post('/auth/register', (req: Request, res: Response) => {
-  const { email, name, role = 'citizen' } = req.body;
-  if (!email || !name) {
-    return res.status(400).json({ error: 'Email and name are required' });
-  }
-
-  const existing = store.getUser(email);
-  if (existing) {
-    return res.status(409).json({ error: 'User already registered' });
-  }
-
-  const newUser: UserAccount = {
-    id: `user-${Date.now().toString().slice(-6)}`,
-    email,
-    name,
-    role: role === 'admin' ? 'volunteer' : role, // Prevent unauthorized admin self-promotion
-    credits: 50,
-    rank: 'Eco Newcomer (Tier 1)',
-    itemsRecycled: 0,
-    hazardousSafeDrops: 0,
-    co2DivertedKg: 0,
-    streakDays: 1,
-    badges: ['Welcome Recycler']
-  };
-
-  store.getUsers().push(newUser);
-  res.json({ success: true, user: newUser });
-});
-
-apiRouter.post('/auth/login', (req: Request, res: Response) => {
-  const { email, role, portal = 'citizen' } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-
-  if (!cleanEmail || !cleanEmail.includes('@')) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
-  }
-
-  // ADMIN SECTION LOGIN: Strictly allow only verified admin emails
-  if (portal === 'admin' || role === 'admin' || role === 'volunteer') {
-    const authorized = store.isEmailAuthorizedAdmin(cleanEmail);
-    if (!authorized) {
-      return res.status(403).json({
-        success: false,
-        error: `Access Denied: '${cleanEmail}' is not an authorized administrator email. Only emails verified in advance by the Main Admin (Elena Rostova) can access the Admin section. Regular users cannot log in here. Please use the Citizen Portal or contact the Main Admin.`
-      });
-    }
-
-    let user = store.getUser(cleanEmail);
-    if (!user) {
-      user = {
-        id: `user-admin-${Date.now()}`,
-        email: cleanEmail,
-        name: authorized.name || cleanEmail.split('@')[0],
-        role: authorized.role,
-        isMainAdmin: authorized.isMainAdmin,
-        stationOrZone: authorized.department,
-        credits: 500,
-        rank: authorized.isMainAdmin ? 'Main Administrator & Lead Auditor' : 'Verified Operations Admin',
-        itemsRecycled: 50,
-        hazardousSafeDrops: 10,
-        co2DivertedKg: 65.0,
-        streakDays: 7,
-        badges: authorized.isMainAdmin ? ['Root Admin', 'Operations Master'] : ['Authorized Admin', 'Operations Verified']
-      };
-      store.getUsers().push(user);
-    } else {
-      user.role = authorized.role;
-      user.isMainAdmin = authorized.isMainAdmin;
-    }
-
-    return res.json({
-      success: true,
-      user,
-      token: `token-${user.id}-${Date.now()}`
-    });
-  }
-
-  // CITIZEN SECTION LOGIN: Open access for all users
-  let user = store.getUser(cleanEmail);
-  if (!user) {
-    const namePart = (cleanEmail.split('@')[0] || 'Citizen').replace(/[._]/g, ' ');
-    const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-    user = {
-      id: `user-citizen-${Date.now()}`,
-      email: cleanEmail,
-      name: req.body.name || formattedName,
-      role: 'citizen',
-      stationOrZone: 'West Campus Hub · Station A',
-      credits: 100,
-      rank: 'Eco Newcomer (Tier 1)',
-      itemsRecycled: 0,
-      hazardousSafeDrops: 0,
-      co2DivertedKg: 0,
-      streakDays: 1,
-      badges: ['Welcome Recycler']
-    };
-    store.getUsers().push(user);
-  }
-
-  return res.json({ 
-    success: true, 
-    user,
-    token: `token-${user.id}-${Date.now()}`
-  });
-});
-
 // Admin Authorization Registry Endpoints (Phase 4 Security & Governance)
-apiRouter.get('/admin/authorized-admins', (_req: Request, res: Response) => {
+apiRouter.get('/admin/authorized-admins', requireRole(['admin']), (_req: Request, res: Response) => {
   res.json({ authorizedAdmins: store.getAuthorizedAdmins() });
 });
 
-apiRouter.post('/admin/authorize-email', (req: Request, res: Response) => {
-  const { email, name, role = 'admin', department, actorName } = req.body;
+apiRouter.post('/admin/authorize-email', requireRole(['admin']), (req: Request, res: Response) => {
+  const { email, name, role = 'admin', department } = req.body;
   const result = store.authorizeAdminEmail({
     email,
     name,
     role,
     department,
-    authorizedBy: actorName || 'Elena Rostova (Main Admin)'
+    authorizedBy: res.locals.authenticatedUser.name
   });
 
   if (!result.success) {
@@ -186,10 +198,9 @@ apiRouter.post('/admin/authorize-email', (req: Request, res: Response) => {
   return res.json({ success: true, authorizedAdmin: result.authorizedAdmin, authorizedAdmins: store.getAuthorizedAdmins() });
 });
 
-apiRouter.delete('/admin/authorize-email/:email', (req: Request, res: Response) => {
+apiRouter.delete('/admin/authorize-email/:email', requireRole(['admin']), (req: Request, res: Response) => {
   const { email } = req.params;
-  const { actorName } = req.body || {};
-  const result = store.revokeAdminEmail(email, actorName);
+  const result = store.revokeAdminEmail(email, res.locals.authenticatedUser.name);
 
   if (!result.success) {
     return res.status(400).json(result);
@@ -197,18 +208,12 @@ apiRouter.delete('/admin/authorize-email/:email', (req: Request, res: Response) 
   return res.json({ success: true, authorizedAdmins: store.getAuthorizedAdmins() });
 });
 
-apiRouter.post('/auth/logout', (_req: Request, res: Response) => {
-  res.json({ success: true, message: 'Logged out successfully' });
-});
-
-apiRouter.get('/auth/me', (req: Request, res: Response) => {
-  const userId = req.headers['x-user-id'] as string;
-  const user = store.getUser(userId || 'user-citizen-1') || SEED_USERS[0];
-  res.json({ user });
-});
-
 // User Profile
 apiRouter.get('/user/:id', (req: Request, res: Response) => {
+  const identity = res.locals.authenticatedUser;
+  if (identity.role !== 'admin' && identity.id !== req.params.id) {
+    return res.status(403).json({ error: 'You may only access your own profile.' });
+  }
   const user = store.getUser(req.params.id);
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
@@ -229,10 +234,9 @@ const handleScanIntake = async (req: Request, res: Response) => {
       hintText, 
       engine = 'yolo',
       station = 'Station A · Library Plaza',
-      userId = 'user-citizen-1',
-      userName = 'Alex Rivera',
       demoImageUrl
     } = req.body;
+    const identity = res.locals.authenticatedUser;
 
     let analysis: any;
     if (engine === 'yolo') {
@@ -259,8 +263,8 @@ const handleScanIntake = async (req: Request, res: Response) => {
       imageUrl: demoImageUrl || imageBase64 || 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=600&auto=format&fit=crop&q=80',
       timestamp: new Date().toISOString(),
       station,
-      userId,
-      userName,
+      userId: identity.id,
+      userName: identity.name,
       suggestedPoints: analysis.suggestedPoints || 15,
       creditsAwarded: 0,
       status: 'scanned',
@@ -271,7 +275,7 @@ const handleScanIntake = async (req: Request, res: Response) => {
         {
           status: 'scanned',
           timestamp: new Date().toISOString(),
-          actor: `${userName} (${engine === 'yolo' ? 'YOLOv8 Edge Model' : 'Gemini 3.8 Flash'})`,
+          actor: `${identity.name} (${engine === 'yolo' ? 'YOLOv8 Edge Model' : 'Gemini 3.8 Flash'})`,
           note: `Classified as ${analysis.category.toUpperCase()} (${Math.round((analysis.confidence || 0.94) * 100)}% confidence). Recommended ${analysis.binColor.toUpperCase()} receptacle.`
         }
       ]
@@ -290,8 +294,8 @@ const handleScanIntake = async (req: Request, res: Response) => {
   }
 };
 
-apiRouter.post('/scan/analyze', handleScanIntake);
-apiRouter.post('/scans', handleScanIntake);
+apiRouter.post('/scan/analyze', limitAiRequests, handleScanIntake);
+apiRouter.post('/scans', limitAiRequests, handleScanIntake);
 
 // Get All Scans / Filter Scans
 apiRouter.get('/scans', (req: Request, res: Response) => {
@@ -310,6 +314,10 @@ apiRouter.get('/scans', (req: Request, res: Response) => {
   if (userId && typeof userId === 'string') {
     items = items.filter(i => i.userId === userId);
   }
+  const identity = res.locals.authenticatedUser;
+  if (identity.role === 'citizen') {
+    items = items.filter(item => item.userId === identity.id);
+  }
 
   res.json({ count: items.length, items });
 });
@@ -317,17 +325,28 @@ apiRouter.get('/scans', (req: Request, res: Response) => {
 apiRouter.get('/scans/:id', (req: Request, res: Response) => {
   const item = store.getItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Scan record not found' });
+  const identity = res.locals.authenticatedUser;
+  if (identity.role === 'citizen' && item.userId !== identity.id) {
+    return res.status(403).json({ error: 'You may only access your own scan.' });
+  }
   res.json({ item });
 });
 
 // Citizen confirms physical bin used (Phase 5 closed loop)
 apiRouter.post('/scans/:id/confirm', (req: Request, res: Response) => {
-  const { confirmedBin, userId } = req.body;
+  const { confirmedBin } = req.body;
   if (!confirmedBin) {
     return res.status(400).json({ error: 'confirmedBin is required' });
   }
 
-  const updatedItem = store.confirmBin(req.params.id, confirmedBin as BinColor, userId);
+  const identity = res.locals.authenticatedUser;
+  const scan = store.getItemById(req.params.id);
+  if (!scan) return res.status(404).json({ error: 'Scan item not found' });
+  if (identity.role !== 'admin' && scan.userId !== identity.id) {
+    return res.status(403).json({ error: 'You may only confirm your own scan.' });
+  }
+
+  const updatedItem = store.confirmBin(req.params.id, confirmedBin as BinColor, identity.id);
   if (!updatedItem) {
     return res.status(404).json({ error: 'Scan item not found' });
   }
@@ -345,10 +364,14 @@ apiRouter.post('/scans/:id/confirm', (req: Request, res: Response) => {
 apiRouter.post('/scans/:id/review', (req: Request, res: Response) => {
   const item = store.getItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
+  const identity = res.locals.authenticatedUser;
+  if (identity.role !== 'admin' && item.userId !== identity.id) {
+    return res.status(403).json({ error: 'You may only flag your own scan.' });
+  }
 
   item.disputed = true;
   item.disputeReason = req.body.reason || 'User flagged scan for review';
-  store.addAuditLog(req.body.userName || 'Citizen', 'citizen', 'MANUAL_REVIEW_FLAG', item.id, item.disputeReason || 'Flagged for review');
+  store.addAuditLog(identity.name, identity.role, 'MANUAL_REVIEW_FLAG', item.id, item.disputeReason || 'Flagged for review');
 
   res.json({ success: true, item });
 });
@@ -357,6 +380,10 @@ apiRouter.post('/scans/:id/review', (req: Request, res: Response) => {
 apiRouter.get('/materials/:id', (req: Request, res: Response) => {
   const item = store.getItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Material Passport not found' });
+  const identity = res.locals.authenticatedUser;
+  if (identity.role === 'citizen' && item.userId !== identity.id) {
+    return res.status(403).json({ error: 'You may only access your own material passport.' });
+  }
   res.json({
     materialPassport: {
       id: item.id,
@@ -381,14 +408,18 @@ apiRouter.get('/materials/:id', (req: Request, res: Response) => {
 apiRouter.get('/materials/:id/history', (req: Request, res: Response) => {
   const item = store.getItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Material record not found' });
+  const identity = res.locals.authenticatedUser;
+  if (identity.role === 'citizen' && item.userId !== identity.id) {
+    return res.status(403).json({ error: 'You may only access your own material history.' });
+  }
   res.json({ id: item.id, history: item.lifecycleHistory });
 });
 
 apiRouter.patch('/materials/:id/status', requireRole(['admin', 'volunteer']), (req: Request, res: Response) => {
-  const { status, actorName = 'Elena Rostova', note } = req.body;
+  const { status, note } = req.body;
   if (!status) return res.status(400).json({ error: 'Status is required' });
 
-  const result = store.updateItemStatus(req.params.id, status as LifecycleStatus, actorName, note);
+  const result = store.updateItemStatus(req.params.id, status as LifecycleStatus, res.locals.authenticatedUser.name, note);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
@@ -441,7 +472,6 @@ apiRouter.post('/volunteer/batch-status', requireRole(['admin', 'volunteer']), (
   const { 
     itemIds, 
     targetStatus, 
-    volunteerName = 'Elena Rostova (Operations Lead)', 
     batchNote 
   } = req.body;
 
@@ -452,7 +482,7 @@ apiRouter.post('/volunteer/batch-status', requireRole(['admin', 'volunteer']), (
   const result = store.batchUpdateStatus(
     itemIds, 
     targetStatus as LifecycleStatus, 
-    volunteerName, 
+    res.locals.authenticatedUser.name,
     batchNote
   );
 
@@ -469,7 +499,6 @@ apiRouter.post('/volunteer/audit', requireRole(['admin', 'volunteer']), (req: Re
   const { 
     itemId, 
     action, 
-    volunteerName = 'Elena Rostova (Operations Lead)', 
     notes, 
     newCategory 
   } = req.body;
@@ -481,7 +510,7 @@ apiRouter.post('/volunteer/audit', requireRole(['admin', 'volunteer']), (req: Re
   const auditedItem = store.auditDispute(
     itemId, 
     action as 'approved' | 'overruled' | 'reclassified', 
-    volunteerName, 
+    res.locals.authenticatedUser.name,
     notes, 
     newCategory as WasteCategory
   );
@@ -502,7 +531,7 @@ apiRouter.get('/bins', (_req: Request, res: Response) => {
 });
 
 apiRouter.post('/bins/:id/empty', requireRole(['admin', 'volunteer']), (req: Request, res: Response) => {
-  const result = store.emptyBin(req.params.id, req.body.actorName || 'Elena Rostova');
+  const result = store.emptyBin(req.params.id, res.locals.authenticatedUser.name);
   if (!result) return res.status(404).json({ error: 'Bin not found' });
   res.json({ 
     success: true, 
@@ -514,7 +543,7 @@ apiRouter.post('/bins/:id/empty', requireRole(['admin', 'volunteer']), (req: Req
 });
 
 apiRouter.post('/bins/dispatch-all-critical', requireRole(['admin', 'volunteer']), (req: Request, res: Response) => {
-  const summary = store.dispatchAllCriticalBins(req.body.actorName || 'Elena Rostova');
+  const summary = store.dispatchAllCriticalBins(res.locals.authenticatedUser.name);
   res.json({ success: true, ...summary });
 });
 
@@ -524,7 +553,7 @@ apiRouter.get('/tasks', (_req: Request, res: Response) => {
 });
 
 apiRouter.post('/tasks/:id/complete', requireRole(['admin', 'volunteer']), (req: Request, res: Response) => {
-  const task = store.completeTask(req.params.id, req.body.actorName || 'Elena Rostova');
+  const task = store.completeTask(req.params.id, res.locals.authenticatedUser.name);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   res.json({ success: true, task });
 });
@@ -536,7 +565,7 @@ apiRouter.get('/rewards', (_req: Request, res: Response) => {
 
 const handleRewardClaim = (req: Request, res: Response) => {
   const rewardId = req.params.id || req.body.rewardId;
-  const userId = req.body.userId || 'user-citizen-1';
+  const userId = res.locals.authenticatedUser.id;
   if (!rewardId) return res.status(400).json({ error: 'rewardId is required' });
 
   const result = store.claimReward(rewardId, userId);
@@ -556,16 +585,16 @@ apiRouter.get('/reuse/listings', (_req: Request, res: Response) => {
 });
 
 apiRouter.post('/reuse', (req: Request, res: Response) => {
-  const listing = store.createReuseListing(req.body);
+  const listing = store.createReuseListing({ ...req.body, donorName: res.locals.authenticatedUser.name });
   res.json({ success: true, listing });
 });
 apiRouter.post('/reuse/listings', (req: Request, res: Response) => {
-  const listing = store.createReuseListing(req.body);
+  const listing = store.createReuseListing({ ...req.body, donorName: res.locals.authenticatedUser.name });
   res.json({ success: true, listing });
 });
 
 apiRouter.post('/reuse/:id/claim', (req: Request, res: Response) => {
-  const listing = store.claimReuseItem(req.params.id, req.body.claimantName || 'Alex Rivera');
+  const listing = store.claimReuseItem(req.params.id, res.locals.authenticatedUser.name);
   if (!listing) return res.status(404).json({ error: 'Listing not available' });
   res.json({ success: true, listing });
 });
@@ -583,7 +612,7 @@ apiRouter.get('/recommendations/history', (_req: Request, res: Response) => {
   res.json({ recommendations: store.getInsights() });
 });
 
-apiRouter.post('/recommendations', async (req: Request, res: Response) => {
+apiRouter.post('/recommendations', limitAiRequests, async (req: Request, res: Response) => {
   try {
     const { materialName = 'Single-Use Packaging', category = 'recyclable', historyContext } = req.body;
     const rec = await generateStructuredRecommendation(materialName, category, historyContext);
@@ -599,7 +628,7 @@ apiRouter.get('/audit-logs', requireRole(['admin', 'volunteer']), (_req: Request
 });
 
 // Generative AI Assistant Route (Phase 8.1)
-apiRouter.post('/ai/ask', async (req: Request, res: Response) => {
+apiRouter.post('/ai/ask', limitAiRequests, async (req: Request, res: Response) => {
   try {
     const { question, context } = req.body;
     if (!question) return res.status(400).json({ error: 'Question is required' });
@@ -620,7 +649,9 @@ apiRouter.get('/admin/analytics', requireRole(['admin', 'volunteer']), (_req: Re
 });
 
 // Reset Demo Data
-apiRouter.post('/reset-demo', (_req: Request, res: Response) => {
+apiRouter.post('/reset-demo', requireRole(['admin']), (_req: Request, res: Response) => {
+  const adminUser = store.getUser(res.locals.authenticatedUser.id);
   store.resetDemo();
+  if (adminUser) store.addUser(adminUser);
   res.json({ success: true, message: 'EcoFlux demo data reset successfully' });
 });

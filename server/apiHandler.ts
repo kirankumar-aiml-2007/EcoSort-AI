@@ -450,6 +450,7 @@ export class EcoSortStore {
 
   getItems(): WasteItem[] { return [...this.items]; }
   getUsers(): UserAccount[] { return [...this.users]; }
+  addUser(user: UserAccount): void { this.users.push(user); }
   getBins(): SmartBin[] { return [...this.bins]; }
   getTasks(): VolunteerTask[] { return [...this.tasks]; }
   getRewards(): RewardItem[] { return [...this.rewards]; }

@@ -110,15 +110,13 @@ export async function fetchAnalytics(): Promise<AnalyticsSummary> {
 }
 
 export async function loginUser(
-  email: string, 
-  role?: 'citizen' | 'volunteer' | 'admin',
-  portal?: 'citizen' | 'admin',
-  name?: string
+  email: string,
+  options: { portal: 'citizen' | 'admin'; name?: string; password?: string }
 ): Promise<UserAccount> {
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, role, portal, name }),
+    body: JSON.stringify({ email, ...options }),
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
@@ -126,6 +124,19 @@ export async function loginUser(
   }
   const data = await res.json();
   return data.user;
+}
+
+export async function fetchCurrentUser(): Promise<UserAccount | null> {
+  const res = await fetch(`${API_BASE}/auth/me`);
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error('Failed to restore sign-in session');
+  const data = await res.json();
+  return data.user;
+}
+
+export async function logoutUser(): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to sign out');
 }
 
 export async function fetchAuthorizedAdmins(): Promise<AuthorizedAdmin[]> {
@@ -308,9 +319,7 @@ export async function askGeminiAssistant(question: string, context?: string): Pr
 }
 
 export async function fetchAdminUsers(): Promise<UserAccount[]> {
-  const res = await fetch(`${API_BASE}/admin/users`, {
-    headers: { 'x-user-role': 'admin' }
-  });
+  const res = await fetch(`${API_BASE}/admin/users`);
   if (!res.ok) throw new Error('Failed to fetch admin users');
   const data = await res.json();
   return data.users || [];
@@ -325,10 +334,7 @@ export async function fetchMaterialPassport(id: string): Promise<any> {
 export async function updateMaterialStatus(id: string, status: LifecycleStatus, actorName?: string, note?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/materials/${id}/status`, {
     method: 'PATCH',
-    headers: { 
-      'Content-Type': 'application/json',
-      'x-user-role': 'admin'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, actorName, note })
   });
   if (!res.ok) {
@@ -363,9 +369,7 @@ export async function fetchSystemHealth(): Promise<any> {
 }
 
 export async function fetchAdminReviews(): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/reviews`, {
-    headers: { 'x-user-role': 'admin' }
-  });
+  const res = await fetch(`${API_BASE}/admin/reviews`);
   if (!res.ok) throw new Error('Failed to fetch admin reviews');
   return res.json();
 }
@@ -379,4 +383,3 @@ export async function requestRecommendation(materialName: string, category: stri
   if (!res.ok) throw new Error('Failed to request recommendation');
   return res.json();
 }
-

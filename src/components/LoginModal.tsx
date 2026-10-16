@@ -1,14 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  Lock, 
-  Mail, 
-  User, 
-  ShieldCheck, 
-  Sparkles,
-  ArrowRight
-} from 'lucide-react';
-import type { UserAccount, UserRole } from '../types/ecosort.ts';
+import { X, Lock, Mail, User, ShieldCheck, ArrowRight } from 'lucide-react';
+import type { UserAccount } from '../types/ecosort.ts';
 import { loginUser } from '../services/apiClient.ts';
 
 interface LoginModalProps {
@@ -20,9 +12,9 @@ interface LoginModalProps {
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLoginSuccess }) => {
   if (!isOpen) return null;
 
-  const [email, setEmail] = useState('citizen@ecosort.ai');
-  const [password, setPassword] = useState('recycle2026');
-  const [role, setRole] = useState<UserRole>('citizen');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'citizen' | 'admin'>('citizen');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -31,7 +23,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
     try {
       setIsLoading(true);
       setErrorMsg(null);
-      const user = await loginUser(email, role);
+      const user = await loginUser(email, {
+        portal: role === 'citizen' ? 'citizen' : 'admin',
+        ...(role === 'admin' ? { password } : {}),
+      });
       onLoginSuccess(user);
       onClose();
     } catch (err: any) {
@@ -39,18 +34,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleFillDemoCitizen = () => {
-    setEmail('citizen@ecosort.ai');
-    setPassword('recycle2026');
-    setRole('citizen');
-  };
-
-  const handleFillDemoVolunteer = () => {
-    setEmail('volunteer@ecosort.ai');
-    setPassword('greenops2026');
-    setRole('volunteer');
   };
 
   return (
@@ -76,34 +59,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
           <p className="text-xs text-slate-400 mt-1">
             Access your personalized sorting profile or the volunteer operations command console.
           </p>
-        </div>
-
-        {/* Quick Demo Credentials Fill Buttons */}
-        <div className="mb-5 p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
-          <div className="text-[11px] font-mono uppercase text-slate-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            1-Click Hackathon Presenter Credentials
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={handleFillDemoCitizen}
-              className="py-1.5 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/30 text-emerald-300 text-xs font-medium text-left transition-colors flex items-center justify-between"
-            >
-              <span>Citizen Recycler</span>
-              <span className="text-[10px] text-emerald-400/80">Alex</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleFillDemoVolunteer}
-              className="py-1.5 px-2.5 rounded-lg border border-blue-500/30 bg-blue-950/20 hover:bg-blue-900/30 text-blue-300 text-xs font-medium text-left transition-colors flex items-center justify-between"
-            >
-              <span>Ops Volunteer</span>
-              <span className="text-[10px] text-blue-400/80">Elena</span>
-            </button>
-          </div>
         </div>
 
         {errorMsg && (
@@ -133,13 +88,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
 
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Password
+              {role === 'admin' ? 'Administrator Password' : 'Password (not needed for guest access)'}
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="password"
-                required
+                required={role === 'admin'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
@@ -169,15 +124,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
 
               <button
                 type="button"
-                onClick={() => setRole('volunteer')}
+                onClick={() => setRole('admin')}
                 className={`py-2 px-3 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                  role === 'volunteer'
+                  role === 'admin'
                     ? 'border-blue-500 bg-blue-500/10 text-blue-400'
                     : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Operations Volunteer
+                Administrator
               </button>
             </div>
           </div>

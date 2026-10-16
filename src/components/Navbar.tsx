@@ -425,14 +425,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           )}
 
-          {/* Reset Demo State */}
-          <button
-            onClick={onResetDemo}
-            title="Reset Demo Dataset"
-            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={onResetDemo}
+              title="Reset Demo Dataset"
+              className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Logout */}
           <button

@@ -39,7 +39,9 @@ import {
   fetchAnalytics, 
   fetchSmartBins, 
   fetchVolunteerTasks, 
-  resetDemoData 
+  resetDemoData,
+  fetchCurrentUser,
+  logoutUser,
 } from './services/apiClient.ts';
 import type { 
   UserAccount, 
@@ -232,7 +234,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadData();
+    fetchCurrentUser()
+      .then(user => {
+        if (!user) return;
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+        return loadData();
+      })
+      .catch(error => {
+        console.warn('Session restore notice:', error);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -429,7 +441,10 @@ export default function App() {
         canGoForward={canGoForward}
         disputedCount={disputedCount}
         onResetDemo={handleResetDemo}
-        onLogout={() => setIsAuthenticated(false)}
+        onLogout={() => {
+          logoutUser().catch(error => console.error('Sign-out error:', error));
+          setIsAuthenticated(false);
+        }}
         onOpenAssistant={openAssistant}
       />
 

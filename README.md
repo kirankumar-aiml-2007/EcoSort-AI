@@ -122,33 +122,42 @@ npm run start
 
 ## 5. Environment Variables
 
-Configure `.env` using `.env.example`:
+Configure `.env` using `.env.example`. In production, set these as private environment variables in the hosting provider:
 ```ini
-# Required for Gemini 3.8 Flash Vision & Assistant features
+# Required for Gemini-powered vision and assistant features
 GEMINI_API_KEY="your-gemini-api-key"
-
-# Application host URL
-APP_URL="http://localhost:3000"
+# Required session signing secret (generate a unique random value)
+SESSION_SECRET="your-long-random-secret"
+# The only administrator allowed to sign in
+ADMIN_EMAIL="admin@example.com"
+ADMIN_PASSWORD="use-a-unique-password-of-at-least-16-characters"
 ```
-Live camera and uploaded-image scans use Gemini Vision by default and require `GEMINI_API_KEY`. Without the key, image analysis reports a configuration error rather than guessing a bin. You can manually select YOLOv8 Edge Vision, but accurate waste sorting requires compatible model weights; otherwise image scans are marked unclassified.
+Never commit real credentials. Citizen access creates a temporary guest profile and does not verify email ownership. Administrator access is limited to the configured `ADMIN_EMAIL` and explicitly authorized administrator emails. The `ADMIN_PASSWORD` is a shared secret for those operator-approved accounts. Sessions use an HTTP-only, same-site cookie and expire after eight hours. AI endpoints apply per-IP request limits.
+
+The current application data store is in memory. Guest accounts, scans, and operational changes are lost when the server restarts or redeploys; configure a persistent database before using this as a production system or storing real personal data. Live image analysis and the assistant require `GEMINI_API_KEY`. Without it, AI-backed functions may be unavailable; YOLO inference also requires compatible model weights.
 
 ---
 
-## 6. Default User Accounts (for Fast Evaluation)
+## 6. Deploy on Render
 
-1. **Citizen Recycler**:
-   - Email: `citizen@ecosort.ai`
-   - Password: `recycle2026`
-   - Role: `citizen` (Alex Rivera, Tier 3 Guardian, 195 pts)
+The repository includes a Render Blueprint in `render.yaml`.
 
-2. **Operations Admin / Volunteer**:
-   - Email: `volunteer@ecosort.ai`
-   - Password: `greenops2026`
-   - Role: `admin` / `volunteer` (Elena Rostova, Operations Lead)
+1. In Render, choose **New → Blueprint** and connect `kirankumar-aiml-2007/EcoSort-AI`.
+2. Set `ADMIN_EMAIL`, a unique `ADMIN_PASSWORD` (at least 16 characters), and `GEMINI_API_KEY` in Render's private environment-variable form. Do not share or commit these values.
+3. Render generates `SESSION_SECRET`, builds the site, and deploys the Express server. The health check is `/api/health`.
+
+The free Render service may sleep when idle. The app currently uses in-memory demo data, so records and guest accounts are not durable across restarts.
 
 ---
 
-## 7. Verification & Test Commands
+## 7. Sign-in
+
+- **Citizen guest:** enter an email and optional display name. Guest access is not email-verified and is intended for demonstrations.
+- **Administrator:** use the configured `ADMIN_EMAIL` or an email explicitly authorized by the administrator, together with the private `ADMIN_PASSWORD`. These secrets are never stored in the repository or sent to the browser as configuration.
+
+---
+
+## 8. Verification & Test Commands
 
 ```sh
 # 1. TypeScript type check
@@ -172,9 +181,9 @@ No automated E2E test script is included in this project yet.
 
 ---
 
-## 8. Complete Demonstration Sequence for Judges
+## 9. Complete Demonstration Sequence for Judges
 
-1. **Authentication Gate**: Start at the split-screen auth screen. Click the **"Alex Rivera (Citizen)"** 1-click fill button and sign in.
+1. **Authentication Gate**: Start at the split-screen auth screen and enter a guest email, or use the configured administrator credentials.
 2. **AI Waste Scanner**: Launch the scanner, select one of the test presets (or use webcam/upload). View the real-time YOLO/Gemini bounding box, 4-stream color code, decomposition timeline, and points.
 3. **Closed-Loop Bin Confirmation**: Confirm the physical bin used (Blue, Green, Brown, or Red). Observe the instant +15 or +25 Eco-Credits award and streak increase.
 4. **Material Passport & QR Traceability**: Open any item from "My Scan History". Inspect the immutable chain of custody and the scannable QR code.
