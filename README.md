@@ -184,10 +184,10 @@ No automated E2E test script is included in this project yet.
 ## 9. Complete Demonstration Sequence for Judges
 
 1. **Authentication Gate**: Start at the split-screen auth screen and enter a guest email, or use the configured administrator credentials.
-2. **AI Waste Scanner**: Launch the scanner, select one of the test presets (or use webcam/upload). View the real-time YOLO/Gemini bounding box, 4-stream color code, decomposition timeline, and points.
+2. **AI Waste Scanner** : Launch the scanner, select one of the test presets (or use webcam/upload). View the real-time YOLO/Gemini bounding box, 4-stream color code, decomposition timeline, and points.
 3. **Closed-Loop Bin Confirmation**: Confirm the physical bin used (Blue, Green, Brown, or Red). Observe the instant +15 or +25 Eco-Credits award and streak increase.
 4. **Material Passport & QR Traceability**: Open any item from "My Scan History". Inspect the immutable chain of custody and the scannable QR code.
-5. **Role Switch to Admin**: Click the top-bar **"User Mode · Switch"** button to toggle instantly to **Elena Rostova (Operations Lead)**.
+5. **Role Switch to Admin**: Click the top-bar **"User Mode  Switch"** button to toggle instantly to **Elena Rostova (Operations Lead)**.
 6. **Contamination & Dispute Desk**: Review flagged items (e.g. greasy pizza box deposited in Blue bin). Overrule or approve with recorded volunteer notes.
 7. **Lifecycle Kanban Pipeline**: Advance batches of items from *Disposed* to *Collected* and *At Processing*.
 8. **3D Digital Twin**: Open the 3D sorting facility to see the animated conveyor, laser sorting arch, and volumetric fill levels bound to real database records.
